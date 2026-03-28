@@ -1,24 +1,21 @@
+tool
 extends Node
 class_name FileUtils
 
-signal progress_updated(current: int, total: int, message: String)
+signal progress_updated(current, total, message)
 
-static var _instance: FileUtils
-static var _mutex: Mutex
-static var _active_threads: Array[Thread] = []
-static var _should_cancel: bool = false
+var _mutex: Mutex
+var _active_threads: Array = []
+var _should_cancel: bool = false
 
-static func get_instance() -> FileUtils:
-	if not _instance:
-		_instance = FileUtils.new()
-		_mutex = Mutex.new()
-	return _instance
+func _init() -> void:
+	_mutex = Mutex.new()
 
 func _notification(what: int) -> void:
 	if what == NOTIFICATION_PREDELETE:
 		_cleanup_threads()
 
-static func scan_res(
+func scan_res(
 			filter_on: bool,
 			search_ext: Array,
 			exclude_folder: Array,
@@ -44,7 +41,7 @@ static func scan_res(
 				ignore_ext
 		)
 	else:
-		print("Start Singletreaded Scan...")
+		print("Start Singlethreaded Scan...")
 		return scan_res_single_threaded(
 				filter_on,
 				search_ext,
@@ -57,7 +54,7 @@ static func scan_res(
 				ignore_ext
 		)
 
-static func scan_res_single_threaded(
+func scan_res_single_threaded(
 			filter_on: bool,
 			search_ext: Array,
 			exclude_folder: Array,
@@ -68,8 +65,7 @@ static func scan_res_single_threaded(
 			ignore_folder: Array,
 			ignore_ext: Array) -> Array:
 	
-	var instance = get_instance()
-	instance.progress_updated.emit(0, 100, "Scanning files (single-threaded)...")
+	emit_signal("progress_updated", 0, 100, "Scanning files (single-threaded)...")
 	
 	var all_files = get_all_files(
 			"res://",
@@ -77,10 +73,10 @@ static func scan_res_single_threaded(
 			exclude_ext,
 			exclude_containing)
 	
-	instance.progress_updated.emit(40, 100, "Analyzing dependencies...")
+	emit_signal("progress_updated", 40, 100, "Analyzing dependencies...")
 	var all_dependencies = collect_all_dependencies(all_files)
 	
-	instance.progress_updated.emit(80, 100, "Filtering results...")
+	emit_signal("progress_updated", 80, 100, "Filtering results...")
 	var no_dependency_files := []
 	
 	for f in all_files:
@@ -96,14 +92,14 @@ static func scan_res_single_threaded(
 		if not all_dependencies.has(f):
 			no_dependency_files.append({
 				"path": f,
-				"size": FileUtils.get_file_size(f),
+				"size": get_file_size(f),
 				"is_checked": false,
 			})
 	
-	instance.progress_updated.emit(100, 100, "Scan complete!")
+	emit_signal("progress_updated", 100, 100, "Scan complete!")
 	return no_dependency_files
 
-static func scan_res_threaded(
+func scan_res_threaded(
 			filter_on: bool,
 			search_ext: Array,
 			exclude_folder: Array,
@@ -114,14 +110,10 @@ static func scan_res_threaded(
 			ignore_folder: Array,
 			ignore_ext: Array) -> Array:
 		
-	var instance = get_instance()
 	_should_cancel = false
-	
-	# Clean up any lingering threads from previous operations
 	_cleanup_threads()
 	
-	# Phase 1: Get all files (use same method as single-threaded for consistency)
-	instance.progress_updated.emit(0, 100, "Scanning files (multi-threaded)...")
+	emit_signal("progress_updated", 0, 100, "Scanning files (multi-threaded)...")
 	var all_files = get_all_files(
 			"res://",
 			exclude_folder,
@@ -131,15 +123,13 @@ static func scan_res_threaded(
 	if _should_cancel:
 		return []
 	
-	# Phase 2: Collect dependencies using threading
-	instance.progress_updated.emit(30, 100, "Analyzing dependencies (multi-threaded)...")
+	emit_signal("progress_updated", 30, 100, "Analyzing dependencies (multi-threaded)...")
 	var all_dependencies = collect_all_dependencies_threaded(all_files)
 	
 	if _should_cancel:
 		return []
 	
-	# Phase 3: Filter files
-	instance.progress_updated.emit(60, 100, "Filtering results...")
+	emit_signal("progress_updated", 60, 100, "Filtering results...")
 	var no_dependency_files = filter_files_threaded(
 		all_files,
 		all_dependencies,
@@ -150,20 +140,20 @@ static func scan_res_threaded(
 		ignore_folder,
 		ignore_ext)
 	
-	instance.progress_updated.emit(100, 100, "Scan complete!")
+	emit_signal("progress_updated", 100, 100, "Scan complete!")
 	return no_dependency_files
 
-static func get_all_files(
+func get_all_files(
 		root: String,
 		exclude_folder: Array,
 		exclude_ext: Array,
 		exclude_containing: Array) -> Array:
 	var result := []
-	var dir := DirAccess.open(root)
-	if not dir:
+	var dir := Directory.new()
+	if dir.open(root) != OK:
 		return result
 	
-	dir.list_dir_begin()
+	dir.list_dir_begin(true, true)
 	while true:
 		if _should_cancel:
 			break
@@ -171,10 +161,8 @@ static func get_all_files(
 		var dir_name = dir.get_next()
 		if dir_name == "":
 			break
-		if dir_name in [".", ".."]:
-			continue
-
-		var full_path := root.path_join(dir_name)
+			
+		var full_path := root.plus_file(dir_name)
 
 		if dir.current_is_dir():
 			if not is_in_list(dir_name, exclude_folder):
@@ -185,55 +173,23 @@ static func get_all_files(
 	dir.list_dir_end()
 	return result
 
-static func _get_all_files_no_cancel(
-		root: String,
-		exclude_folder: Array,
-		exclude_ext: Array,
-		exclude_containing: Array) -> Array:
-	var result := []
-	var dir := DirAccess.open(root)
-	if not dir:
-		return result
-	
-	dir.list_dir_begin()
-	while true:
-		var dir_name = dir.get_next()
-		if dir_name == "":
-			break
-		if dir_name in [".", ".."]:
-			continue
-
-		var full_path := root.path_join(dir_name)
-
-		if dir.current_is_dir():
-			if not is_in_list(dir_name, exclude_folder):
-				result += _get_all_files_no_cancel(full_path, exclude_folder, exclude_ext, exclude_containing)
-		elif not has_extension(dir_name, exclude_ext) and not contains_any(full_path, exclude_containing):
-			result.append(full_path)
-	
-	dir.list_dir_end()
-	return result
-
-static func _get_files_in_single_directory(
+func _get_files_in_single_directory(
 		root: String,
 		exclude_ext: Array,
 		exclude_containing: Array) -> Array:
 	var result := []
-	var dir := DirAccess.open(root)
-	if not dir:
+	var dir := Directory.new()
+	if dir.open(root) != OK:
 		return result
 	
-	dir.list_dir_begin()
+	dir.list_dir_begin(true, true)
 	while true:
 		var dir_name = dir.get_next()
 		if dir_name == "":
 			break
-		if dir_name in [".", ".."]:
-			continue
 		
-		var full_path := root.path_join(dir_name)
+		var full_path := root.plus_file(dir_name)
 		
-		# Only process files, not subdirectories (subdirectories are handled separately)
 		if not dir.current_is_dir():
 			if not has_extension(dir_name, exclude_ext) and not contains_any(full_path, exclude_containing):
 				result.append(full_path)
@@ -241,33 +197,28 @@ static func _get_files_in_single_directory(
 	dir.list_dir_end()
 	return result
 
-static func get_all_files_threaded(
+func get_all_files_threaded(
 		root: String,
 		exclude_folder: Array,
 		exclude_ext: Array,
 		exclude_containing: Array) -> Array:
 	
 	var result := []
-	var instance = get_instance()
-	
-	# Get root directories to distribute work
 	var root_dirs = _get_root_directories(root, exclude_folder)
 	var total_dirs = root_dirs.size()
 	
 	if total_dirs == 0:
 		return result
 	
-	var threads: Array[Thread] = []
-	var results: Array = []
+	var threads := []
+	var results := []
 	var processed_dirs = 0
 	
-	# Initialize results array
 	for i in range(total_dirs):
 		results.append([])
 	
-	# Create worker threads
 	var max_threads = min(OS.get_processor_count(), total_dirs)
-	var dirs_per_thread = ceili(float(total_dirs) / max_threads)
+	var dirs_per_thread = ceil(float(total_dirs) / max_threads)
 	
 	for thread_id in range(max_threads):
 		var thread = Thread.new()
@@ -286,72 +237,59 @@ static func get_all_files_threaded(
 				"results": results
 			}
 			
-			thread.start(_file_scan_worker.bind(thread_data))
+			thread.start(self, "_file_scan_worker", thread_data)
 			threads.append(thread)
 	
-	# Store threads for proper cleanup
 	_mutex.lock()
 	for thread in threads:
 		_active_threads.append(thread)
 	_mutex.unlock()
 	
-	# Wait for threads and collect results
 	for i in range(threads.size()):
 		var thread = threads[i]
 		thread.wait_to_finish()
 		
 		_mutex.lock()
 		processed_dirs += 1
-		var progress = int((float(processed_dirs) / threads.size()) * 30)  # 30% of total progress
-		instance.progress_updated.emit(progress, 100, "Scanning directories... (%d/%d)" % [processed_dirs, threads.size()])
+		var progress = int((float(processed_dirs) / threads.size()) * 30)
+		emit_signal("progress_updated", progress, 100, "Scanning directories... (%d/%d)" % [processed_dirs, threads.size()])
 		_mutex.unlock()
 	
-	# Clean up completed threads
 	_mutex.lock()
 	for thread in threads:
 		_active_threads.erase(thread)
 	_mutex.unlock()
 	
-	# Combine results
 	for thread_result in results:
 		result += thread_result
 	
 	return result
 
-static func _get_root_directories(root: String, exclude_folder: Array) -> Array:
+func _get_root_directories(root: String, exclude_folder: Array) -> Array:
 	var dirs := []
-	var dir := DirAccess.open(root)
-	if not dir:
+	var dir := Directory.new()
+	if dir.open(root) != OK:
 		return dirs
 	
-	# First, add the root directory to process files in root
 	dirs.append(root)
-	
-	# Then add subdirectories
-	dir.list_dir_begin()
+	dir.list_dir_begin(true, true)
 	while true:
 		var dir_name = dir.get_next()
 		if dir_name == "":
 			break
-		if dir_name in [".", ".."]:
-			continue
-		
 		if dir.current_is_dir() and not is_in_list(dir_name, exclude_folder):
-			dirs.append(root.path_join(dir_name))
+			dirs.append(root.plus_file(dir_name))
 	dir.list_dir_end()
-	
 	return dirs
 
-static func _file_scan_worker(data: Dictionary) -> void:
+func _file_scan_worker(data: Dictionary) -> void:
 	var thread_id = data.thread_id
 	var start_idx = data.start_idx
 	var end_idx = data.end_idx
 	var root_dirs = data.root_dirs
-	var exclude_folder = data.exclude_folder
 	var exclude_ext = data.exclude_ext
 	var exclude_containing = data.exclude_containing
 	var results = data.results
-	
 	var thread_result := []
 	
 	for i in range(start_idx, end_idx):
@@ -366,60 +304,58 @@ static func _file_scan_worker(data: Dictionary) -> void:
 	results[thread_id] = thread_result
 	_mutex.unlock()
 
-static func contains_any(target: String, list: Array) -> bool:
+func contains_any(target: String, list: Array) -> bool:
 	for sub in list:
-		if target.contains(sub):
+		if target.find(sub) != -1:
 			return true
 	return false
 
-static func is_in_list(target: String, list: Array) -> bool:
+func is_in_list(target: String, list: Array) -> bool:
 	for item in list:
 		if target == item:
 			return true
 	return false
 
-static func has_extension(path: String, list: Array) -> bool:
+func has_extension(path: String, list: Array) -> bool:
 	for ext in list:
 		if path.ends_with(ext):
 			return true
 	return false
 
-static func has_folder(path: String, list: Array) -> bool:
+func has_folder(path: String, list: Array) -> bool:
 	var segments = path.replace("res://", "").split("/")
 	for folder in list:
 		if folder in segments:
 			return true
 	return false
 
-static func collect_all_dependencies(paths: Array) -> Array:
+func collect_all_dependencies(paths: Array) -> Array:
 	var all_deps := []
 	for p in paths:
-		for d in ResourceLoader.get_dependencies(p):
-			var path : String = d.get_slice("::", 2)
-			if !all_deps.has(path):
-				all_deps.append(path)
+		var deps = ResourceLoader.get_dependencies(p)
+		for d in deps:
+			# Godot 3 returns simple paths, no "::" parsing needed.
+			if !all_deps.has(d):
+				all_deps.append(d)
 	return all_deps
 
-static func collect_all_dependencies_threaded(paths: Array) -> Array:
-	var instance = get_instance()
+func collect_all_dependencies_threaded(paths: Array) -> Array:
 	var all_deps := []
 	var total_files = paths.size()
 	
 	if total_files == 0:
 		return all_deps
 	
-	var threads: Array[Thread] = []
-	var results: Array = []
+	var threads := []
+	var results := []
 	var processed_files = 0
 	
 	var max_threads = min(OS.get_processor_count(), total_files)
-	var files_per_thread = ceili(float(total_files) / max_threads)
+	var files_per_thread = ceil(float(total_files) / max_threads)
 	
-	# Initialize results array
 	for i in range(max_threads):
 		results.append([])
 	
-	# Create worker threads
 	for thread_id in range(max_threads):
 		var thread = Thread.new()
 		var start_idx = thread_id * files_per_thread
@@ -434,33 +370,29 @@ static func collect_all_dependencies_threaded(paths: Array) -> Array:
 				"results": results
 			}
 			
-			thread.start(_dependency_worker.bind(thread_data))
+			thread.start(self, "_dependency_worker", thread_data)
 			threads.append(thread)
 	
-	# Store threads for proper cleanup
 	_mutex.lock()
 	for thread in threads:
 		_active_threads.append(thread)
 	_mutex.unlock()
 	
-	# Wait for threads and collect results
 	for i in range(threads.size()):
 		var thread = threads[i]
 		thread.wait_to_finish()
 		
 		_mutex.lock()
 		processed_files += files_per_thread
-		var progress = 30 + int((float(min(processed_files, total_files)) / total_files) * 30)  # 30-60% of total progress
-		instance.progress_updated.emit(progress, 100, "Analyzing dependencies... (%d/%d)" % [min(processed_files, total_files), total_files])
+		var progress = 30 + int((float(min(processed_files, total_files)) / total_files) * 30)
+		emit_signal("progress_updated", progress, 100, "Analyzing dependencies... (%d/%d)" % [min(processed_files, total_files), total_files])
 		_mutex.unlock()
 	
-	# Clean up completed threads
 	_mutex.lock()
 	for thread in threads:
 		_active_threads.erase(thread)
 	_mutex.unlock()
 	
-	# Combine and deduplicate results
 	var deps_set := {}
 	for thread_result in results:
 		for dep in thread_result:
@@ -468,13 +400,12 @@ static func collect_all_dependencies_threaded(paths: Array) -> Array:
 	
 	return deps_set.keys()
 
-static func _dependency_worker(data: Dictionary) -> void:
+func _dependency_worker(data: Dictionary) -> void:
 	var thread_id = data.thread_id
 	var start_idx = data.start_idx
 	var end_idx = data.end_idx
 	var paths = data.paths
 	var results = data.results
-	
 	var thread_deps := []
 	
 	for i in range(start_idx, end_idx):
@@ -484,15 +415,14 @@ static func _dependency_worker(data: Dictionary) -> void:
 		var p = paths[i]
 		var deps = ResourceLoader.get_dependencies(p)
 		for d in deps:
-			var path: String = d.get_slice("::", 2)
-			if not thread_deps.has(path):
-				thread_deps.append(path)
+			if not thread_deps.has(d):
+				thread_deps.append(d)
 	
 	_mutex.lock()
 	results[thread_id] = thread_deps
 	_mutex.unlock()
 
-static func filter_files_threaded(
+func filter_files_threaded(
 		all_files: Array,
 		all_dependencies: Array,
 		filter_on: bool,
@@ -502,7 +432,6 @@ static func filter_files_threaded(
 		ignore_folder: Array,
 		ignore_ext: Array) -> Array:
 	
-	var instance = get_instance()
 	var no_dependency_files := []
 	var total_files = all_files.size()
 	var processed_files = 0
@@ -524,22 +453,22 @@ static func filter_files_threaded(
 		if not all_dependencies.has(f):
 			no_dependency_files.append({
 				"path": f,
-				"size": FileUtils.get_file_size(f),
+				"size": get_file_size(f),
 				"is_checked": false,
 			})
 		
 		processed_files += 1
-		if processed_files % 50 == 0:  # Update every 50 files
-			var progress = 60 + int((float(processed_files) / total_files) * 40)  # 60-100% of total progress
-			instance.progress_updated.emit(progress, 100, "Filtering results... (%d/%d)" % [processed_files, total_files])
+		if processed_files % 50 == 0:
+			var progress = 60 + int((float(processed_files) / total_files) * 40)
+			emit_signal("progress_updated", progress, 100, "Filtering results... (%d/%d)" % [processed_files, total_files])
 	
 	return no_dependency_files
 
-static func cancel_scan() -> void:
+func cancel_scan() -> void:
 	_should_cancel = true
 	_cleanup_threads()
 
-static func _cleanup_threads() -> void:
+func _cleanup_threads() -> void:
 	if not _mutex:
 		return
 		
@@ -549,44 +478,47 @@ static func _cleanup_threads() -> void:
 	_active_threads.clear()
 	_mutex.unlock()
 	
-	# Wait for all active threads to complete
 	for thread in threads_to_wait:
 		if thread and thread is Thread:
-			if thread.is_alive():
+			if thread.is_active():
 				thread.wait_to_finish()
-			thread = null  # Explicitly release reference
 	
 	_mutex.lock()
 	_active_threads.clear()
 	_mutex.unlock()
 
-static func sorting(no_dependency_files: Array, sort: int) -> void:
-	if no_dependency_files.is_empty():
+
+class FileSorter:
+	static func sort_size_asc(a, b):
+		if a.size == b.size: return a.path < b.path
+		return a.size < b.size
+	static func sort_size_desc(a, b):
+		if a.size == b.size: return a.path < b.path
+		return a.size > b.size
+	static func sort_path_asc(a, b):
+		return a.path < b.path
+	static func sort_path_desc(a, b):
+		return a.path > b.path
+
+func sorting(no_dependency_files: Array, sort_type: int) -> void:
+	if no_dependency_files.empty():
 		return
 		
-	match sort:
+	match sort_type:
 		0: # NONE:
 			pass
 		1: # SIZE_ASC
-			no_dependency_files.sort_custom(func(a, b):
-				if a.size == b.size:
-					return a.path < b.path
-				return a.size < b.size)
+			no_dependency_files.sort_custom(FileSorter, "sort_size_asc")
 		2: # SIZE_DESC
-			no_dependency_files.sort_custom(func(a, b):
-				if a.size == b.size:
-					return a.path < b.path
-				return a.size > b.size)
+			no_dependency_files.sort_custom(FileSorter, "sort_size_desc")
 		3: # PATH_ASC
-			no_dependency_files.sort_custom(func(a, b):
-				return a.path < b.path)
+			no_dependency_files.sort_custom(FileSorter, "sort_path_asc")
 		4: # PATH_DESC
-			no_dependency_files.sort_custom(func(a, b):
-				return a.path > b.path)
+			no_dependency_files.sort_custom(FileSorter, "sort_path_desc")
 
-static func delete_selected(no_dependency_files: Array) -> void:
-	var dir = DirAccess.open("res://")
-	if not dir:
+func delete_selected(no_dependency_files: Array) -> void:
+	var dir = Directory.new()
+	if dir.open("res://") != OK:
 		return
 		
 	var deleted_count := 0
@@ -602,7 +534,6 @@ static func delete_selected(no_dependency_files: Array) -> void:
 					space_freed += ndf.size
 					print("File deleted: ", path)
 					
-					# Check for .import file of same folder
 					var import_path = path + ".import"
 					if dir.file_exists(import_path):
 						var import_err = dir.remove(import_path)
@@ -610,51 +541,36 @@ static func delete_selected(no_dependency_files: Array) -> void:
 							print("Associated .import file deleted: ", import_path)
 						else:
 							print("Failed to delete .import file: ", import_path)
-							
-					# Check for .uid file of same folder
-					var uid_path = path + ".uid"
-					if dir.file_exists(uid_path):
-						var uid_err = dir.remove(uid_path)
-						if uid_err == OK:
-							print("Associated .uid file deleted: ", uid_path)
-						else:
-							print("Failed to delete .uid file: ", uid_path)
 				else:
 					print("Failed to delete File: ", path)
 					
-	print("Deleted %d unused files, freed %s" % [deleted_count, FileUtils.format_file_size(space_freed)])
+	print("Deleted %d unused files, freed %s" % [deleted_count, format_file_size(space_freed)])
 
-static func clean_import(root: String, exclude_folder: Array) -> void:
-	var deleted_count := [0]  # use an array to pass by reference
+func clean_import(root: String, exclude_folder: Array) -> void:
+	var deleted_count := [0]
 	_clean_orphaned_files(root, ".import", exclude_folder, deleted_count)
 	print("Deleted %d orphaned .import files" % deleted_count[0])
 
-static func clean_uid(root: String, exclude_folder: Array) -> void:
-	var deleted_count := [0]  # use an array to pass by reference
-	_clean_orphaned_files(root, ".uid", exclude_folder, deleted_count)
-	print("Deleted %d orphaned .uid files" % deleted_count[0])
-
-static func _clean_orphaned_files(root: String, extension: String, exclude_folder: Array, count: Array) -> void:
-	var dir := DirAccess.open(root)
-	if not dir:
+func _clean_orphaned_files(root: String, extension: String, exclude_folder: Array, count: Array) -> void:
+	var dir := Directory.new()
+	if dir.open(root) != OK:
 		return
 		
-	dir.list_dir_begin()
+	dir.list_dir_begin(true, true)
 	while true:
 		var dir_name = dir.get_next()
 		if dir_name == "":
 			break
-		if dir_name in [".", ".."]:
-			continue
 		
-		var path = root.path_join(dir_name)
+		var path = root.plus_file(dir_name)
 		
 		if dir.current_is_dir():
 			if not is_in_list(dir_name, exclude_folder):
 				_clean_orphaned_files(path, extension, exclude_folder, count)
 		elif dir_name.ends_with(extension):
 			var source_path = path.replace(extension, "")
-			if not FileAccess.file_exists(source_path):
+			var f = File.new()
+			if not f.file_exists(source_path):
 				var err = dir.remove(path)
 				if err == OK:
 					count[0] += 1
@@ -663,26 +579,24 @@ static func _clean_orphaned_files(root: String, extension: String, exclude_folde
 					print("Failed to delete:", path)
 	dir.list_dir_end()
 
-static func clean_empty_folders(root: String, exclude_folder: Array) -> void:
-	var deleted_count := [0]  # use an array to pass by reference
+func clean_empty_folders(root: String, exclude_folder: Array) -> void:
+	var deleted_count := [0]
 	_remove_empty_dirs(root, exclude_folder, deleted_count)
 	print("Deleted %d empty folders" % deleted_count[0])
 
-static func _remove_empty_dirs(root: String, exclude_folder: Array, deleted_count: Array) -> bool:
-	var dir := DirAccess.open(root)
-	if not dir:
+func _remove_empty_dirs(root: String, exclude_folder: Array, deleted_count: Array) -> bool:
+	var dir := Directory.new()
+	if dir.open(root) != OK:
 		return false
 
 	var is_empty := true
-	dir.list_dir_begin()
+	dir.list_dir_begin(true, true)
 	while true:
 		var dir_name = dir.get_next()
 		if dir_name == "":
 			break
-		if dir_name in [".", ".."]:
-			continue
 			
-		var path = root.path_join(dir_name)
+		var path = root.plus_file(dir_name)
 		
 		if dir.current_is_dir():
 			if not is_in_list(dir_name, exclude_folder):
@@ -693,25 +607,28 @@ static func _remove_empty_dirs(root: String, exclude_folder: Array, deleted_coun
 	dir.list_dir_end()
 
 	if is_empty:
-		var parent_dir := DirAccess.open(root.get_base_dir())
-		if parent_dir and parent_dir.remove(root) == OK:
-			deleted_count[0] += 1
-			print("Deleted empty folder:", root)
+		var parent_dir := Directory.new()
+		if parent_dir.open(root.get_base_dir()) == OK:
+			if parent_dir.remove(root) == OK:
+				deleted_count[0] += 1
+				print("Deleted empty folder:", root)
 		return true
 	return false
 
-static func get_file_size(path: String) -> int:
-	if FileAccess.file_exists(path):
-		var file = FileAccess.open(path, FileAccess.READ)
-		if file:
-			return file.get_length()
+func get_file_size(path: String) -> int:
+	var f = File.new()
+	if f.file_exists(path):
+		if f.open(path, File.READ) == OK:
+			var size = f.get_len()
+			f.close()
+			return size
 	return 0
 
-static func format_file_size(bytes: int) -> String:
-	if bytes >= 1_073_741_824:
-		return "%.1f GB" % (bytes / 1_073_741_824.0)
-	elif bytes >= 1_048_576:
-		return "%.1f MB" % (bytes / 1_048_576.0)
+func format_file_size(bytes: int) -> String:
+	if bytes >= 1073741824:
+		return "%.1f GB" % (bytes / 1073741824.0)
+	elif bytes >= 1048576:
+		return "%.1f MB" % (bytes / 1048576.0)
 	elif bytes >= 1024:
 		return "%.1f KB" % (bytes / 1024.0)
 	else:
