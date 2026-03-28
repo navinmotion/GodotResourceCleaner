@@ -48,4 +48,4 @@ All credit for the original implementation goes to the project's author and cont
 
 ## ⚖️ License
 
-This repository retains the original license. Please refer to the [`LICENSE`](./LICENSE) file for details.
+This repository retains the original license. Please refer to the [`LICENSE`](https://github.com/ijoschek/GodotResourceCleaner?tab=MIT-1-ov-file) file for details.
