@@ -1,6 +1,6 @@
 # Godot 3.x Compatibility
 
-This repository includes a dedicated branch, `godot3`, providing compatibility with Godot 3.x through minor API adjustments.
+This repository includes a dedicated branch, `godot-3.x`, providing compatibility with Godot 3.x through minor API adjustments.
 
 The goal of this branch is to maintain the original functionality of the tool while enabling its use in projects that have not yet migrated to Godot 4.
 
