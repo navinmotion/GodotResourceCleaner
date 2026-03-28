@@ -31,8 +31,8 @@ Usage remains identical to the original project. Please refer to the [main docum
 
 | Branch | Description |
 |--------|-------------|
-| `main` | Tracks the original Godot 4 version |
-| `godot3` | Contains the Godot 3.x compatible version |
+| `godot-4.x` | Tracks the original Godot 4 version |
+| `godot-3.x` | Contains the Godot 3.x compatible version |
 
 ---
 
